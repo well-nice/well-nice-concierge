@@ -1,55 +1,36 @@
-const { generateGPTRecommendation, getGptResponse } = require('../services/aiService');
-const { fetchPreviewData } = require('../services/scraperService');
-const { searchProducts, formatResults } = require('../services/productService');
+const { getWellNiceResponse } = require('../services/aiService');
 
-// Original endpoint handler
+// Main concierge handler
 exports.getConciergeResponse = async (req, res) => {
   try {
-    const userPrompt = req.body.prompt;
-    const { commentary, url } = await generateGPTRecommendation(userPrompt);
-    const previewData = await fetchPreviewData(url);
-
+    const { query, conversationHistory = [] } = req.body;
+    
+    // Get AI response with Well Nice sensibility
+    const response = await getWellNiceResponse(query, conversationHistory);
+    
     res.status(200).json({
-      commentary,
-      product: previewData
+      type: 'text_response',
+      message: response
     });
-
   } catch (error) {
     console.error('Concierge API Error:', error);
-    res.status(500).json({ error: 'Something went wrong, elegantly of course.' });
+    res.status(500).json({ 
+      type: 'error',
+      message: 'Something went wrong, elegantly of course.'
+    });
   }
 };
 
-// New enhanced endpoint handler for product search and chat
-exports.getProductResults = async (req, res) => {
-  const { query, conversationHistory = [] } = req.body;
+// Simple greeting endpoint
+exports.getGreeting = (req, res) => {
+  const hour = new Date().getHours();
+  let greeting = "Good day";
   
-  try {
-    // First attempt to find matching products
-    const matchingProducts = await searchProducts(query);
-    
-    if (matchingProducts.length > 0) {
-      const formattedResults = await formatResults(matchingProducts);
-      
-      res.json({
-        type: 'product_results',
-        message: `I've found a few options that might interest you:`,
-        products: formattedResults
-      });
-    } else {
-      // Fallback to GPT response
-      const gptResponse = await getGptResponse(query, conversationHistory);
-      
-      res.json({
-        type: 'text_response',
-        message: gptResponse
-      });
-    }
-  } catch (error) {
-    console.error('Error processing request:', error);
-    res.status(500).json({ 
-      type: 'error', 
-      message: "I'm terribly sorry, but I'm having trouble processing your request at the moment." 
-    });
-  }
+  if (hour < 12) greeting = "Good morning";
+  else if (hour < 18) greeting = "Good afternoon";
+  else greeting = "Good evening";
+  
+  res.json({ 
+    greeting: `${greeting}. Tell me what you're after and I'll go find it.` 
+  });
 };
