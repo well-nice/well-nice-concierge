@@ -1,6 +1,6 @@
 {
   "name": "well-nice-concierge",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Well Nice Concierge - AI-powered recommendations with discerning taste",
   "main": "app.js",
   "scripts": {
