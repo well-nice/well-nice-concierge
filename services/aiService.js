@@ -196,7 +196,7 @@ class WellNiceConcierge {
         model: "gpt-4-turbo",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content": this.memory.generateContextPrompt() },
+          { role: "user", content: this.memory.generateContextPrompt() },
           { role: "user", content: query }
         ],
         max_tokens: 300,
@@ -229,7 +229,7 @@ class WellNiceConcierge {
         model: "gpt-4-turbo",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content": this.memory.generateContextPrompt() },
+          { role: "user", content: this.memory.generateContextPrompt() },
           { role: "user", content: query }
         ],
         max_tokens: 300,
