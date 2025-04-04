@@ -9,69 +9,99 @@ The Well Nice Concierge is a sophisticated, design-literate assistant that helps
 ## Features
 
 - Pure AI-powered recommendations with Well Nice aesthetic sensibility
-- Elegant, minimalist interface that fits seamlessly into the Well Nice brand
+- Elegant, minimalist interface
 - Thoughtful, considered responses to user queries
-- Time-of-day aware greetings
-- Conversation context memory
+- Intelligent product discovery
+- Contextual conversation management
+- Continuous learning and insights generation
 
 ## Tech Stack
 
 - **Backend**: Node.js with Express
 - **AI**: OpenAI GPT-4 
+- **Product Discovery**: Google Custom Search
 - **Frontend**: Embedded in SquareSpace
 - **Deployment**: Render
+
+## Prerequisites
+
+- Node.js (v16.0.0 or later)
+- npm
+- OpenAI API Key
+- Google Custom Search API Key
 
 ## Setup
 
 1. Clone the repository
-2. Install dependencies: `npm install`
-3. Create a `.env` file with:
+   ```bash
+   git clone https://github.com/your-org/well-nice-concierge.git
+   cd well-nice-concierge
    ```
-   PORT=5000
-   OPENAI_API_KEY=your_openai_api_key
+
+2. Install dependencies
+   ```bash
+   npm install
    ```
-4. Start the server: `npm start`
+
+3. Create environment variables
+   - Copy `.env.example` to `.env`
+   - Fill in the required API keys
+   ```bash
+   cp .env.example .env
+   ```
+
+4. Configure environment variables
+   - `OPENAI_API_KEY`: Your OpenAI API key
+   - `GOOGLE_SEARCH_API_KEY`: Your Google Custom Search API key
+   - `GOOGLE_SEARCH_ENGINE_ID`: Your Google Custom Search Engine ID
+
+5. Run the application
+   ```bash
+   # Development mode
+   npm run dev
+
+   # Production mode
+   npm start
+   ```
 
 ## API Endpoints
 
-- `POST /api/concierge`: Main endpoint for concierge conversations
-- `GET /api/greeting`: Get time-based greeting message
+- `POST /api/concierge`: Main conversation endpoint
+- `GET /api/greeting`: Get a contextual greeting
+- `GET /api/insights`: Retrieve current insights summary
 
 ## Deployment
 
 Deploy on Render with the following environment variables:
 - `PORT`: 5000 (or let Render handle this)
 - `OPENAI_API_KEY`: Your OpenAI API key
-
-## Frontend Integration
-
-The concierge is designed to be embedded directly into a SquareSpace page as a seamless part of the Well Nice experience, rather than as a pop-up chatbot.
+- `GOOGLE_SEARCH_API_KEY`: Your Google Search API key
+- `GOOGLE_SEARCH_ENGINE_ID`: Your Google Search Engine ID
 
 ## AI Learning Capabilities
 
-The Well Nice Concierge features an intelligent learning system that continuously improves recommendations:
+The concierge features an intelligent learning system that:
+- Tracks user interactions and preferences
+- Generates insights from conversation patterns
+- Continuously refines product recommendations
 
-### Insights Accumulation
-- Tracks user interactions and preferences over time
-- Learns from:
-  * Conversation queries
-  * Product search results
-  * User interaction patterns
+## Privacy
 
-### Key Insights Tracked
-- Popular brands
-- Preferred colors
-- Frequently mentioned product categories
-- Common user query patterns
-
-### Insights API Endpoints
-- `GET /api/insights`: Retrieve current insights summary
-- `POST /api/generate-insights`: Manually trigger insights generation
-
-### Learning Mechanism
-The concierge becomes smarter with each interaction, providing more personalized and refined recommendations over time.
-
-### Privacy Note
 - Insights are anonymized and aggregated
 - No personal user data is stored
 - Learning is based on collective interaction patterns
+
+## Contribution
+
+Contributions are welcome. Please ensure:
+- Code follows project's coding standards
+- All tests pass
+- No sensitive information is committed
+
+## License
+
+[Specify your license]
+
+## Contact
+
+For more information, contact [your contact information]
