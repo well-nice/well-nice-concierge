@@ -1,176 +1,216 @@
 const axios = require('./axiosConfig');
 const cheerio = require('cheerio');
-const { Configuration, OpenAIApi } = require('openai');
+const { OpenAI } = require('openai');
 
-class ProductDiscoveryService {
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+/**
+ * Well Nice Product Discovery Service
+ * 
+ * A sophisticated product discovery service using Google Custom Search
+ * to find design-forward, aesthetically pleasing products.
+ */
+class ProductService {
   constructor() {
-    this.openai = new OpenAIApi(new Configuration({
-      apiKey: process.env.OPENAI_API_KEY
-    }));
+    this.googleApiKey = process.env.GOOGLE_SEARCH_API_KEY;
+    this.googleSearchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
   }
 
-  // Main product search method using Google
-  async findPerfectProduct(userContext) {
+  /**
+   * Search for products based on a query
+   * @param {string} query - The search query
+   * @returns {Promise<Array>} - Array of product results
+   */
+  async searchProducts(query) {
     try {
-      // Generate an intelligent search query
-      const searchQuery = await this.generateIntelligentSearchQuery(userContext);
+      // Add UK-specific search modifiers if not present
+      const enhancedQuery = query.toLowerCase().includes('uk') ? 
+        query : `${query} uk`;
+
+      const searchResults = await this.googleSearch(enhancedQuery);
       
-      // Perform Google search
-      const searchResults = await this.performGoogleSearch(searchQuery);
-      
-      // Curate and enrich results
-      const enrichedResults = await this.enrichSearchResults(searchResults);
-      
+      if (!searchResults.length) {
+        console.log('No search results found, falling back to web scraping');
+        return [];
+      }
+
+      // Enrich the top 5 results with additional details
+      const enrichedResults = await Promise.all(
+        searchResults.slice(0, 5).map(result => this.enrichResult(result))
+      );
+
       return enrichedResults;
     } catch (error) {
-      console.error('Product discovery error:', error);
+      console.error('Error searching products:', error);
       return [];
     }
   }
 
-  // Generate intelligent search query using AI
-  async generateIntelligentSearchQuery(userContext) {
-    try {
-      const response = await this.openai.createChatCompletion({
-        model: "gpt-4-turbo",
-        messages: [
-          {
-            role: "system",
-            content: `Convert user context into a precise, design-focused Google search query.
-            Considerations:
-            - High-end, considered products
-            - Specific design attributes
-            - Potential retailers or brand nuances
-            - Minimal, elegant search phrasing`
-          },
-          {
-            role: "user",
-            content: JSON.stringify(userContext)
-          }
-        ],
-        max_tokens: 100,
-        temperature: 0.7
-      });
-
-      const query = response.choices[0].message.content.trim();
-      return `${query} buy online site:uk`;
-    } catch (error) {
-      console.error('Search query generation error:', error);
-      return userContext.query || '';
-    }
-  }
-
-  // Perform Google Search 
-  async performGoogleSearch(query) {
+  /**
+   * Perform a Google Custom Search
+   * @param {string} query - The search query
+   * @returns {Promise<Array>} - Array of search results
+   */
+  async googleSearch(query) {
     try {
       const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
         params: {
-          key: process.env.GOOGLE_SEARCH_API_KEY,
-          cx: process.env.GOOGLE_SEARCH_ENGINE_ID,
+          key: this.googleApiKey,
+          cx: this.googleSearchEngineId,
           q: query,
-          num: 5  // Limit to 5 results
+          num: 5
         }
       });
 
-      return response.data.items || [];
+      if (!response.data.items || response.data.items.length === 0) {
+        return [];
+      }
+
+      return response.data.items.map(item => ({
+        title: item.title,
+        link: item.link,
+        snippet: item.snippet,
+        image: item.pagemap?.cse_image?.[0]?.src || '',
+        source: item.displayLink
+      }));
     } catch (error) {
-      console.error('Google Search error:', error);
+      console.error('Google Search API error:', error);
+      
+      // Fallback to basic results if API fails
       return [];
     }
   }
 
-  // Enrich search results with additional details
-  async enrichSearchResults(results) {
-    const enrichPromises = results.map(async (result) => {
-      try {
-        // Fetch additional details about the product/link
-        const pageDetails = await this.fetchPageMetadata(result.link);
+  /**
+   * Enrich a search result with additional details
+   * @param {object} result - The search result to enrich
+   * @returns {Promise<object>} - Enriched result
+   */
+  async enrichResult(result) {
+    try {
+      // Fetch page content to extract more details
+      const metadata = await this.fetchPageMetadata(result.link);
+      
+      // Generate AI product description
+      const description = await this.generateDescription(
+        result.title, 
+        result.snippet, 
+        metadata.description || ''
+      );
 
-        // Use AI to generate a refined description
-        const description = await this.generateProductDescription(result);
-
-        return {
-          ...result,
-          ...pageDetails,
-          description,
-          preview: this.createProductPreview(result, pageDetails)
-        };
-      } catch (error) {
-        console.error(`Enrichment error for ${result.link}:`, error);
-        return result;
-      }
-    });
-
-    return Promise.all(enrichPromises);
+      return {
+        ...result,
+        description,
+        price: metadata.price || 'Price not available',
+        image: metadata.image || result.image,
+        metadata
+      };
+    } catch (error) {
+      console.error(`Error enriching result for ${result.link}:`, error);
+      return result;
+    }
   }
 
-  // Fetch basic metadata from the page
+  /**
+   * Fetch metadata from a product page
+   * @param {string} url - The URL to fetch metadata from
+   * @returns {Promise<object>} - Extracted metadata
+   */
   async fetchPageMetadata(url) {
     try {
       const response = await axios.get(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        timeout: 5000
       });
 
       const $ = cheerio.load(response.data);
       
-      return {
-        image: $('meta[property="og:image"]').attr('content') || 
-               $('img').first().attr('src'),
-        price: $('[class*="price"]').first().text().trim()
+      // Extract common metadata
+      const metadata = {
+        title: $('meta[property="og:title"]').attr('content') || $('title').text(),
+        description: $('meta[property="og:description"]').attr('content') || $('meta[name="description"]').attr('content'),
+        image: $('meta[property="og:image"]').attr('content'),
       };
+
+      // Extract price with various selectors for different sites
+      const priceSelectors = [
+        '.price', 
+        '[data-testid="price"]', 
+        '[class*="price"]', 
+        '[id*="price"]',
+        'span:contains("£")'
+      ];
+
+      for (const selector of priceSelectors) {
+        const priceElement = $(selector).first();
+        if (priceElement.length) {
+          metadata.price = priceElement.text().trim();
+          break;
+        }
+      }
+
+      // Fallback to using a better image if none found in metadata
+      if (!metadata.image) {
+        const imgSrc = $('img[src*="product"], img[src*="large"], img[src*="main"], img[data-main-image]').first().attr('src');
+        if (imgSrc) {
+          metadata.image = imgSrc.startsWith('http') ? imgSrc : new URL(imgSrc, url).toString();
+        }
+      }
+
+      return metadata;
     } catch (error) {
-      console.error(`Metadata fetch error for ${url}:`, error);
+      console.error(`Error fetching metadata for ${url}:`, error);
       return {};
     }
   }
 
-  // Generate product description using AI
-  async generateProductDescription(result) {
+  /**
+   * Generate an AI-enhanced description for a product
+   * @param {string} title - The product title
+   * @param {string} snippet - The search snippet
+   * @param {string} description - The product description
+   * @returns {Promise<string>} - Enhanced description
+   */
+  async generateDescription(title, snippet, description) {
     try {
-      const response = await this.openai.createChatCompletion({
-        model: "gpt-4-turbo",
+      // Call OpenAI to generate a more elegant description
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4-turbo',
         messages: [
           {
-            role: "system",
-            content: `Craft a minimal, sophisticated product description.
-            Tone: Understated elegance
-            Style: Well Nice aesthetic
-            Focus: Design essence and quality`
+            role: 'system',
+            content: `
+              You are a design-conscious writer for a high-end concierge service.
+              Create a sophisticated, minimal product description in 1-2 sentences.
+              Focus on aesthetics, design, and quality.
+              Return only the description, with no additional text.
+            `
           },
           {
-            role: "user",
-            content: JSON.stringify(result)
+            role: 'user',
+            content: `
+              Product: ${title}
+              Snippet: ${snippet}
+              Description: ${description || 'No description available'}
+            `
           }
         ],
-        max_tokens: 150,
-        temperature: 0.5
+        temperature: 0.7,
+        max_tokens: 100,
+        top_p: 1
       });
 
       return response.choices[0].message.content.trim();
     } catch (error) {
-      console.error('Description generation error:', error);
-      return "A considered discovery.";
+      console.error('Error generating product description:', error);
+      return snippet || 'A considered selection.';
     }
-  }
-
-  // Create an elegant product preview
-  createProductPreview(result, metadata) {
-    return `
-      <div class="well-nice-product-preview">
-        ${metadata.image ? `<img src="${metadata.image}" alt="${result.title}" />` : ''}
-        <div class="product-details">
-          <h3>${result.title}</h3>
-          <p>${result.description || 'A refined selection.'}</p>
-          <a href="${result.link}" target="_blank" class="purchase-link">
-            Explore
-          </a>
-          ${metadata.price ? `<span class="price">${metadata.price}</span>` : ''}
-        </div>
-      </div>
-    `;
   }
 }
 
-module.exports = new ProductDiscoveryService();
+module.exports = new ProductService();
