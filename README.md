@@ -46,3 +46,32 @@ Deploy on Render with the following environment variables:
 ## Frontend Integration
 
 The concierge is designed to be embedded directly into a SquareSpace page as a seamless part of the Well Nice experience, rather than as a pop-up chatbot.
+
+## AI Learning Capabilities
+
+The Well Nice Concierge features an intelligent learning system that continuously improves recommendations:
+
+### Insights Accumulation
+- Tracks user interactions and preferences over time
+- Learns from:
+  * Conversation queries
+  * Product search results
+  * User interaction patterns
+
+### Key Insights Tracked
+- Popular brands
+- Preferred colors
+- Frequently mentioned product categories
+- Common user query patterns
+
+### Insights API Endpoints
+- `GET /api/insights`: Retrieve current insights summary
+- `POST /api/generate-insights`: Manually trigger insights generation
+
+### Learning Mechanism
+The concierge becomes smarter with each interaction, providing more personalized and refined recommendations over time.
+
+### Privacy Note
+- Insights are anonymized and aggregated
+- No personal user data is stored
+- Learning is based on collective interaction patterns
