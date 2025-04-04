@@ -1,112 +1,134 @@
-const { getWellNiceResponse, insightsLearner } = require('../services/aiService');
+const aiService = require('../services/aiService');
+const productService = require('../services/productService');
 
-// Conversation state management
-const conversationStates = new Map();
+/**
+ * Well Nice Concierge Controller
+ * 
+ * Handles the integration between AI services and product discovery
+ * for a sophisticated, design-conscious concierge experience.
+ */
+class ConciergeController {
+  /**
+   * Process a message from the user and generate an appropriate response
+   * @param {object} req - The request object
+   * @param {object} res - The response object
+   */
+  async processMessage(req, res) {
+    try {
+      const { message, context } = req.body;
+      
+      if (!message) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Message is required' 
+        });
+      }
 
-// Main concierge handler
-exports.getConciergeResponse = async (req, res) => {
-  try {
-    const { query, sessionId } = req.body;
-    
-    // Retrieve or create conversation state
-    let conversationState = conversationStates.get(sessionId) || {
-      history: [],
-      stage: null
-    };
-
-    // Get AI response with Well Nice sensibility
-    const response = await getWellNiceResponse(query);
-    
-    // Update conversation history
-    conversationState.history.push(
-      { role: 'user', content: query },
-      { role: 'assistant', content: response.message }
-    );
-    
-    // Update or create conversation state
-    conversationStates.set(sessionId, {
-      history: conversationState.history,
-      stage: response.type
-    });
-
-    // Prepare response payload
-    const responsePayload = {
-      type: response.type,
-      message: response.message
-    };
-
-    // Add products if available
-    if (response.products && response.products.length > 0) {
-      responsePayload.products = response.products.map(product => ({
-        title: product.title,
-        description: product.description,
-        url: product.url,
-        image: product.image,
-        price: product.price,
-        insightScore: product.insightScore
-      }));
+      // Process the message with the AI service
+      const response = await aiService.processMessage(message, context);
+      
+      return res.status(200).json({ 
+        success: true, 
+        response 
+      });
+    } catch (error) {
+      console.error('Error processing message:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to process message' 
+      });
     }
+  }
 
-    // Optionally include insights for advanced frontend uses
-    if (response.insights) {
-      responsePayload.insights = response.insights;
+  /**
+   * Search for products based on user request
+   * @param {object} req - The request object
+   * @param {object} res - The response object
+   */
+  async searchProducts(req, res) {
+    try {
+      const { query } = req.body;
+      
+      if (!query) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Search query is required' 
+        });
+      }
+
+      // Generate an optimized search query
+      const enhancedQuery = await aiService.generateSearchQuery(query);
+      
+      // Search for products using the enhanced query
+      const products = await productService.searchProducts(enhancedQuery);
+      
+      // Enhance product descriptions if available
+      const enhancedProducts = await Promise.all(
+        products.slice(0, 3).map(async (product) => {
+          return await aiService.enhanceProductDescription(product);
+        })
+      );
+
+      return res.status(200).json({ 
+        success: true, 
+        products: enhancedProducts,
+        originalQuery: query,
+        enhancedQuery 
+      });
+    } catch (error) {
+      console.error('Error searching products:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to search products' 
+      });
     }
-
-    res.status(200).json(responsePayload);
-  } catch (error) {
-    console.error('Concierge API Error:', error);
-    res.status(500).json({ 
-      type: 'error',
-      message: 'Something went wrong, elegantly of course.'
-    });
   }
-};
 
-// Endpoint to retrieve accumulated insights
-exports.getInsightsSummary = async (req, res) => {
-  try {
-    const insights = insightsLearner.generateInsightsSummary();
-    res.status(200).json(insights);
-  } catch (error) {
-    console.error('Insights retrieval error:', error);
-    res.status(500).json({ 
-      type: 'error',
-      message: 'Could not retrieve insights at this moment.'
-    });
+  /**
+   * Get product recommendations based on context
+   * @param {object} req - The request object
+   * @param {object} res - The response object
+   */
+  async getRecommendations(req, res) {
+    try {
+      const { category, preferences, context } = req.body;
+      
+      if (!category) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Category is required' 
+        });
+      }
+
+      // Generate a search query based on category and preferences
+      const searchQuery = await aiService.generateSearchQuery(
+        `${category} ${preferences || ''} high quality design-conscious`
+      );
+      
+      // Search for products using the generated query
+      const products = await productService.searchProducts(searchQuery);
+      
+      // Enhance the top products
+      const enhancedProducts = await Promise.all(
+        products.slice(0, 3).map(async (product) => {
+          return await aiService.enhanceProductDescription(product);
+        })
+      );
+
+      return res.status(200).json({ 
+        success: true, 
+        recommendations: enhancedProducts,
+        category,
+        searchQuery 
+      });
+    } catch (error) {
+      console.error('Error getting recommendations:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to get recommendations' 
+      });
+    }
   }
-};
+}
 
-// Periodic insights generation (could be triggered by a scheduled job)
-exports.generatePeriodicInsights = async (req, res) => {
-  try {
-    const insights = await insightsLearner.generateInsightsSummary();
-    
-    // Optional: You could implement additional processing or storage here
-    console.log('Periodic Insights Generated:', insights);
-    
-    res.status(200).json({
-      message: 'Insights generated successfully',
-      insights
-    });
-  } catch (error) {
-    console.error('Periodic insights generation error:', error);
-    res.status(500).json({ 
-      type: 'error',
-      message: 'Could not generate insights.'
-    });
-  }
-};
-
-// Simple greeting endpoint
-exports.getGreeting = (req, res) => {
-  const hour = new Date().getHours();
-  let greeting = "Good day";
-  
-  if (hour < 12) greeting = "Good morning";
-  else if (hour < 18) greeting = "Good afternoon";
-  else greeting = "Good evening";
-  
-  res.json({ 
-    greeting: `${greeting}. What refined pursuit shall we embark upon today?` 
-  });
-};
+module.exports = new ConciergeController();
