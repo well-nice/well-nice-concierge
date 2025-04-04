@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('./axiosConfig');
 const cheerio = require('cheerio');
 const { Configuration, OpenAIApi } = require('openai');
 
