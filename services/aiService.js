@@ -1,272 +1,179 @@
-const OpenAI = require('openai');
-const { searchProducts, formatResults } = require('./productService');
-const insightsLearner = require('./insightsLearner');
+const { OpenAI } = require('openai');
+const dotenv = require('dotenv');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+dotenv.config();
 
-class ConversationMemory {
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+/**
+ * Well Nice AI Service
+ * 
+ * Provides sophisticated, high-end concierge AI assistance with:
+ * - Elegant, minimal responses
+ * - Design-conscious tone
+ * - Intelligent conversation handling
+ */
+class AIService {
   constructor() {
-    this.conversationLog = [];
-    this.contextualDetails = {};
-    this.searchHistory = [];
-    this.currentIntent = null;
-  }
-
-  // Add a new message to the conversation log
-  addMessage(role, content, metadata = {}) {
-    const message = {
-      role,
-      content,
-      timestamp: new Date(),
-      metadata
-    };
-    this.conversationLog.push(message);
-  }
-
-  // Update contextual details
-  updateContextualDetails(key, value) {
-    this.contextualDetails[key] = value;
-  }
-
-  // Track search history
-  trackSearch(query, results) {
-    this.searchHistory.push({
-      query,
-      results,
-      timestamp: new Date()
-    });
-  }
-
-  // Generate context prompt for AI
-  generateContextPrompt() {
-    // Create a condensed version of recent conversation
-    const recentMessages = this.conversationLog.slice(-5);
-    const contextSummary = recentMessages.map(msg => 
-      `${msg.role.toUpperCase()}: ${msg.content}`
-    ).join('\n');
-
-    const contextualDetails = Object.entries(this.contextualDetails)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join('\n');
-
-    return `
-      CONVERSATION CONTEXT:
-      Recent Conversation:
-      ${contextSummary}
-
-      Contextual Details:
-      ${contextualDetails}
+    this.conversationContext = [];
+    this.systemPrompt = `
+      You are the Well Nice Concierge, a sophisticated, design-conscious digital assistant.
+      
+      Core principles:
+      - Provide elegant, minimal responses (2-3 sentences when possible)
+      - Use a sophisticated, understated tone reflecting high-end design sensibilities
+      - Be helpful, direct, and intelligent
+      - Never use emojis or exclamation points
+      - Think of publications like Kinfolk and Cereal Magazine in your aesthetic
+      - Prioritize UK-based, design-forward product recommendations when asked
+      
+      Conversation style:
+      - Brief, considered responses
+      - Sophisticated vocabulary
+      - Subtle wit when appropriate
+      - Genuine curiosity about user needs
+      - Minimal filler language
     `;
   }
 
-  // Trigger learning process
-  async triggerLearning() {
-    await insightsLearner.learnFromConversation(this);
+  /**
+   * Process a user message and generate a response
+   * @param {string} userMessage - The message from the user
+   * @param {object} context - Optional context information
+   * @returns {Promise<string>} - The AI response
+   */
+  async processMessage(userMessage, context = {}) {
+    try {
+      // Add message to conversation history
+      this.conversationContext.push({
+        role: 'user',
+        content: userMessage
+      });
+
+      // Trim conversation context if it gets too long
+      if (this.conversationContext.length > 10) {
+        this.conversationContext = this.conversationContext.slice(-10);
+      }
+
+      // Build the messages array with system prompt
+      const messages = [
+        { 
+          role: 'system', 
+          content: this.systemPrompt 
+        },
+        ...this.conversationContext
+      ];
+
+      // Call OpenAI API
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 150,
+        top_p: 1,
+        frequency_penalty: 0.5,
+        presence_penalty: 0.3,
+      });
+
+      const aiResponse = response.choices[0].message.content.trim();
+      
+      // Add AI response to conversation history
+      this.conversationContext.push({
+        role: 'assistant',
+        content: aiResponse
+      });
+
+      return aiResponse;
+    } catch (error) {
+      console.error('Error in AI service:', error);
+      return 'I apologize, but I am unable to process your request at the moment.';
+    }
+  }
+
+  /**
+   * Generate search queries based on user request
+   * @param {string} userRequest - The user's product search request
+   * @returns {Promise<string>} - Enhanced search query
+   */
+  async generateSearchQuery(userRequest) {
+    try {
+      const messages = [
+        {
+          role: 'system',
+          content: `
+            You are a search query optimizer for a high-end design concierge.
+            Your task is to transform user requests into optimal search queries.
+            Focus on UK-based, design-forward, aesthetically pleasing products.
+            Return ONLY the search query without any additional text or explanation.
+          `
+        },
+        {
+          role: 'user',
+          content: `Generate an optimal search query for: "${userRequest}"`
+        }
+      ];
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 60,
+        top_p: 1,
+      });
+
+      return response.choices[0].message.content.trim();
+    } catch (error) {
+      console.error('Error generating search query:', error);
+      return userRequest;
+    }
+  }
+
+  /**
+   * Enhance product description with design-conscious details
+   * @param {object} product - The product object to enhance
+   * @returns {Promise<object>} - Enhanced product object
+   */
+  async enhanceProductDescription(product) {
+    try {
+      const messages = [
+        {
+          role: 'system',
+          content: `
+            You are a design-conscious product writer for a high-end concierge service.
+            Enhance the given product with an elegant, minimal description.
+            Focus on design elements, materials, and aesthetics.
+            Be sophisticated but concise (max 2 sentences).
+            Return ONLY the enhanced description without additional text.
+          `
+        },
+        {
+          role: 'user',
+          content: `Enhance this product description in a Well Nice style:
+            Title: ${product.title}
+            Description: ${product.description || 'No description available'}
+            URL: ${product.link}
+          `
+        }
+      ];
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 100,
+        top_p: 1,
+      });
+
+      product.enhancedDescription = response.choices[0].message.content.trim();
+      return product;
+    } catch (error) {
+      console.error('Error enhancing product description:', error);
+      return product;
+    }
   }
 }
 
-class WellNiceConcierge {
-  constructor() {
-    this.memory = new ConversationMemory();
-    this.insightsLearner = insightsLearner;
-  }
-
-  // Main conversation processing method
-  async getWellNiceResponse(query) {
-    try {
-      // Add user query to conversation memory
-      this.memory.addMessage('user', query);
-
-      // Determine conversation strategy using AI
-      const contextPrompt = this.memory.generateContextPrompt();
-      const conversationStrategy = await this.determineConversationStrategy(query, contextPrompt);
-
-      // Process based on strategy
-      let response;
-      switch (conversationStrategy.action) {
-        case 'product_search':
-          response = await this.handleProductSearch(query);
-          break;
-        case 'context_inquiry':
-          response = await this.handleContextInquiry(query);
-          break;
-        default:
-          response = await this.handleDefaultResponse(query);
-      }
-
-      // Trigger learning process
-      await this.memory.triggerLearning();
-
-      // Add assistant response to memory
-      this.memory.addMessage('assistant', response.message);
-
-      return response;
-    } catch (error) {
-      console.error('Conversation processing error:', error);
-      return this.handleErrorResponse(error);
-    }
-  }
-
-  // Determine conversation strategy using AI
-  async determineConversationStrategy(query, contextPrompt) {
-    const systemPrompt = `
-      Analyze the current conversation and determine the most appropriate action:
-      
-      Possible Actions:
-      1. product_search: Search for products
-      2. context_inquiry: Ask clarifying questions
-      3. default_response: General conversation
-
-      Consider:
-      - Depth and specificity of the query
-      - Existing conversation context
-      - Implied user intent
-    `;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4-turbo",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: contextPrompt },
-          { role: "user", content: query }
-        ],
-        max_tokens: 300,
-        temperature: 0.7,
-      });
-
-      const strategyText = response.choices[0].message.content.toLowerCase();
-      
-      if (strategyText.includes('product_search')) {
-        return { action: 'product_search' };
-      }
-      
-      if (strategyText.includes('context_inquiry')) {
-        return { action: 'context_inquiry' };
-      }
-      
-      return { action: 'default_response' };
-    } catch (error) {
-      console.error('Strategy determination error:', error);
-      return { action: 'default_response' };
-    }
-  }
-
-  // Handle product search
-  async handleProductSearch(query) {
-    try {
-      // Use contextual information to refine search
-      const contextualQuery = this.memory.generateContextPrompt() + ' ' + query;
-      
-      // Search and format products
-      const productResults = await searchProducts(contextualQuery);
-      const formattedResults = await formatResults(productResults);
-      
-      // Enhance recommendations using insights
-      const enhancedResults = this.insightsLearner.enhanceRecommendations(formattedResults);
-      
-      // Track search in memory
-      this.memory.trackSearch(query, enhancedResults);
-      
-      return {
-        type: 'product_search',
-        message: "I've curated some options that might intrigue you.",
-        products: enhancedResults,
-        insights: this.insightsLearner.generateInsightsSummary()
-      };
-    } catch (error) {
-      console.error('Product search error:', error);
-      return this.handleDefaultResponse(query);
-    }
-  }
-
-  // Handle context inquiry
-  async handleContextInquiry(query) {
-    const systemPrompt = `
-      Provide an elegant, probing response to gather more context.
-      
-      Your goal is to:
-      - Ask thoughtful, refined questions
-      - Understand the user's deeper preferences
-      - Maintain a sophisticated, minimalist tone
-    `;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4-turbo",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: this.memory.generateContextPrompt() },
-          { role: "user", content: query }
-        ],
-        max_tokens: 300,
-        temperature: 0.7,
-      });
-
-      const contextInquiryResponse = response.choices[0].message.content;
-      
-      return {
-        type: 'context_inquiry',
-        message: contextInquiryResponse
-      };
-    } catch (error) {
-      console.error('Context inquiry error:', error);
-      return this.handleDefaultResponse(query);
-    }
-  }
-
-  // Handle default conversational response
-  async handleDefaultResponse(query) {
-    const systemPrompt = `
-      Provide an engaging, sophisticated response that:
-      - Acknowledges the user's input
-      - Maintains the Well Nice aesthetic
-      - Shows genuine interest
-    `;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-4-turbo",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: this.memory.generateContextPrompt() },
-          { role: "user", content: query }
-        ],
-        max_tokens: 300,
-        temperature: 0.7,
-      });
-
-      const defaultResponse = response.choices[0].message.content;
-      
-      return {
-        type: 'default_response',
-        message: defaultResponse
-      };
-    } catch (error) {
-      console.error('Default response error:', error);
-      return this.handleErrorResponse(error);
-    }
-  }
-
-  // Handle error responses
-  handleErrorResponse(error) {
-    return {
-      type: 'error',
-      message: "Apologies, our conversation has been momentarily interrupted."
-    };
-  }
-}
-
-// Singleton instance
-const wellNiceConcierge = new WellNiceConcierge();
-
-// Main export function
-async function getWellNiceResponse(query) {
-  return await wellNiceConcierge.getWellNiceResponse(query);
-}
-
-module.exports = { 
-  getWellNiceResponse,
-  conversationMemory: wellNiceConcierge.memory,
-  insightsLearner: wellNiceConcierge.insightsLearner
-};
+module.exports = new AIService();
