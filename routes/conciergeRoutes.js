@@ -1,14 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { 
-  getConciergeResponse, 
-  getProductResults 
-} = require('../controllers/conciergeController');
+const { getConciergeResponse, getGreeting } = require('../controllers/conciergeController');
 
-// Original endpoint
-router.post('/query', getConciergeResponse);
+// Main concierge endpoint
+router.post('/concierge', getConciergeResponse);
 
-// New enhanced endpoint for product search and chat
-router.post('/concierge', getProductResults);
+// Greeting endpoint
+router.get('/greeting', getGreeting);
 
 module.exports = router;
