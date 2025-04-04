@@ -10,20 +10,6 @@ app.use(express.json());
 // Mount API routes
 app.use('/api', conciergeRoutes);
 
-// Greeting endpoint for the concierge
-app.get('/api/greeting', (req, res) => {
-  const hour = new Date().getHours();
-  let greeting = "Good day";
-  
-  if (hour < 12) greeting = "Good morning";
-  else if (hour < 18) greeting = "Good afternoon";
-  else greeting = "Good evening";
-  
-  res.json({ 
-    greeting: `${greeting}. Tell me what you're after and I'll go find it.` 
-  });
-});
-
 app.get('/', (req, res) => {
   res.send('Well Nice Concierge is running beautifully.');
 });
