@@ -1,136 +1,176 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { Configuration, OpenAIApi } = require('openai');
 
-// Product cache to reduce redundant scraping
-const productCache = new Map();
-const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+class ProductDiscoveryService {
+  constructor() {
+    this.openai = new OpenAIApi(new Configuration({
+      apiKey: process.env.OPENAI_API_KEY
+    }));
+  }
 
-// Fetch product data from Google Sheet
-async function fetchProductData() {
-  try {
-    const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL;
-    if (!GOOGLE_SHEET_URL) {
-      console.error('Google Sheet URL not defined in environment variables');
+  // Main product search method using Google
+  async findPerfectProduct(userContext) {
+    try {
+      // Generate an intelligent search query
+      const searchQuery = await this.generateIntelligentSearchQuery(userContext);
+      
+      // Perform Google search
+      const searchResults = await this.performGoogleSearch(searchQuery);
+      
+      // Curate and enrich results
+      const enrichedResults = await this.enrichSearchResults(searchResults);
+      
+      return enrichedResults;
+    } catch (error) {
+      console.error('Product discovery error:', error);
       return [];
     }
-
-    const response = await axios.get(GOOGLE_SHEET_URL);
-    const lines = response.data.split('\n');
-    const headers = lines[0].split(',');
-    
-    return lines.slice(1).map(line => {
-      const values = line.split(',');
-      const product = {};
-      
-      headers.forEach((header, index) => {
-        product[header.trim()] = values[index]?.trim() || '';
-      });
-      
-      return product;
-    }).filter(product => product.url && product.url.length > 5);
-  } catch (error) {
-    console.error('Error fetching product data:', error);
-    return [];
   }
-}
 
-// Scrape website for product details
-async function scrapeProductDetails(url) {
-  if (productCache.has(url)) {
-    const cachedData = productCache.get(url);
-    if (Date.now() - cachedData.timestamp < CACHE_EXPIRY) {
-      return cachedData.data;
+  // Generate intelligent search query using AI
+  async generateIntelligentSearchQuery(userContext) {
+    try {
+      const response = await this.openai.createChatCompletion({
+        model: "gpt-4-turbo",
+        messages: [
+          {
+            role: "system",
+            content: `Convert user context into a precise, design-focused Google search query.
+            Considerations:
+            - High-end, considered products
+            - Specific design attributes
+            - Potential retailers or brand nuances
+            - Minimal, elegant search phrasing`
+          },
+          {
+            role: "user",
+            content: JSON.stringify(userContext)
+          }
+        ],
+        max_tokens: 100,
+        temperature: 0.7
+      });
+
+      const query = response.choices[0].message.content.trim();
+      return `${query} buy online site:uk`;
+    } catch (error) {
+      console.error('Search query generation error:', error);
+      return userContext.query || '';
     }
   }
 
-  try {
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+  // Perform Google Search 
+  async performGoogleSearch(query) {
+    try {
+      const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
+        params: {
+          key: process.env.GOOGLE_SEARCH_API_KEY,
+          cx: process.env.GOOGLE_SEARCH_ENGINE_ID,
+          q: query,
+          num: 5  // Limit to 5 results
+        }
+      });
+
+      return response.data.items || [];
+    } catch (error) {
+      console.error('Google Search error:', error);
+      return [];
+    }
+  }
+
+  // Enrich search results with additional details
+  async enrichSearchResults(results) {
+    const enrichPromises = results.map(async (result) => {
+      try {
+        // Fetch additional details about the product/link
+        const pageDetails = await this.fetchPageMetadata(result.link);
+
+        // Use AI to generate a refined description
+        const description = await this.generateProductDescription(result);
+
+        return {
+          ...result,
+          ...pageDetails,
+          description,
+          preview: this.createProductPreview(result, pageDetails)
+        };
+      } catch (error) {
+        console.error(`Enrichment error for ${result.link}:`, error);
+        return result;
       }
     });
-    
-    const $ = cheerio.load(response.data);
-    
-    const title = $('meta[property="og:title"]').attr('content') || 
-                  $('title').text() || 
-                  $('h1').first().text();
-                  
-    const image = $('meta[property="og:image"]').attr('content') || 
-                  $('img').first().attr('src');
-                  
-    const description = $('meta[property="og:description"]').attr('content') || 
-                        $('meta[name="description"]').attr('content') || 
-                        $('p').first().text();
-    
-    const price = $('.price').first().text() || 
-                  $('[class*="price"]').first().text() || 
-                  '';
-    
-    const productDetails = { 
-      title: title?.trim(), 
-      image: image?.startsWith('http') ? image : `${new URL(url).origin}${image}`,
-      description: description?.trim(), 
-      price: price?.trim(),
-      url
-    };
-    
-    // Save to cache
-    productCache.set(url, {
-      data: productDetails,
-      timestamp: Date.now()
-    });
-    
-    return productDetails;
-  } catch (error) {
-    console.error(`Error scraping ${url}:`, error);
-    return { url, title: 'Product', description: 'Could not retrieve details', image: '' };
+
+    return Promise.all(enrichPromises);
+  }
+
+  // Fetch basic metadata from the page
+  async fetchPageMetadata(url) {
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      const $ = cheerio.load(response.data);
+      
+      return {
+        image: $('meta[property="og:image"]').attr('content') || 
+               $('img').first().attr('src'),
+        price: $('[class*="price"]').first().text().trim()
+      };
+    } catch (error) {
+      console.error(`Metadata fetch error for ${url}:`, error);
+      return {};
+    }
+  }
+
+  // Generate product description using AI
+  async generateProductDescription(result) {
+    try {
+      const response = await this.openai.createChatCompletion({
+        model: "gpt-4-turbo",
+        messages: [
+          {
+            role: "system",
+            content: `Craft a minimal, sophisticated product description.
+            Tone: Understated elegance
+            Style: Well Nice aesthetic
+            Focus: Design essence and quality`
+          },
+          {
+            role: "user",
+            content: JSON.stringify(result)
+          }
+        ],
+        max_tokens: 150,
+        temperature: 0.5
+      });
+
+      return response.choices[0].message.content.trim();
+    } catch (error) {
+      console.error('Description generation error:', error);
+      return "A considered discovery.";
+    }
+  }
+
+  // Create an elegant product preview
+  createProductPreview(result, metadata) {
+    return `
+      <div class="well-nice-product-preview">
+        ${metadata.image ? `<img src="${metadata.image}" alt="${result.title}" />` : ''}
+        <div class="product-details">
+          <h3>${result.title}</h3>
+          <p>${result.description || 'A refined selection.'}</p>
+          <a href="${result.link}" target="_blank" class="purchase-link">
+            Explore
+          </a>
+          ${metadata.price ? `<span class="price">${metadata.price}</span>` : ''}
+        </div>
+      </div>
+    `;
   }
 }
 
-// Search for products based on user query
-async function searchProducts(query) {
-  const products = await fetchProductData();
-  const keywords = query.toLowerCase().split(' ');
-  
-  // Score each product based on keyword matches
-  const scoredProducts = products.map(product => {
-    let score = 0;
-    const searchText = (product.name + ' ' + product.description + ' ' + product.category + ' ' + product.tags).toLowerCase();
-    
-    keywords.forEach(keyword => {
-      if (searchText.includes(keyword)) {
-        score += 1;
-      }
-    });
-    
-    return { ...product, score };
-  });
-  
-  // Sort by score and take top results
-  return scoredProducts
-    .filter(product => product.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-}
-
-// Format results for rich preview cards
-async function formatResults(products) {
-  try {
-    const detailedProducts = await Promise.all(
-      products.map(product => scrapeProductDetails(product.url))
-    );
-    
-    return detailedProducts.filter(product => product.title && product.description);
-  } catch (error) {
-    console.error('Error formatting results:', error);
-    return [];
-  }
-}
-
-module.exports = {
-  fetchProductData,
-  scrapeProductDetails,
-  searchProducts,
-  formatResults
-};
+module.exports = new ProductDiscoveryService();
