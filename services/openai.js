@@ -1,11 +1,10 @@
 // services/openai.js
 const axios = require('axios');
 const dotenv = require('dotenv');
-const { getProductRecommendations } = require('./products');
 
 dotenv.config();
 
-// --- Call OpenAI with conversation history ---
+// --- Call ChatGPT with your message history ---
 async function callOpenAI(messages) {
   try {
     const response = await axios.post(
@@ -31,46 +30,26 @@ async function callOpenAI(messages) {
   }
 }
 
-// --- Enhance response: text → structure ---
+// --- Enhance ChatGPT response for frontend formatting ---
 async function enhanceResponse(text) {
   try {
-    const parsedResponse = parseResponse(text);
+    const parsed = parseResponse(text);
 
-    // If product cards, enrich with real data
-    if (parsedResponse.type === 'product-cards') {
-      const productNames = parsedResponse.content.map(p => p.name);
-      const realProducts = await getProductRecommendations(productNames);
-
-      if (realProducts?.length) {
-        parsedResponse.content = parsedResponse.content.map((product, i) => {
-          const match = realProducts.find(p => p.name.toLowerCase() === product.name.toLowerCase()) || realProducts[i];
-          return match ? {
-            ...product,
-            price: match.price || product.price,
-            description: match.description || product.description,
-            image: match.image || product.image,
-            url: match.url || '#'
-          } : product;
-        });
-      }
+    if (parsed.type === 'text') {
+      return [{ type: 'text', text: parsed.content }];
     }
 
-    // --- Standardized Output Format ---
-    if (parsedResponse.type === 'text') {
-      return [{ type: 'text', text: parsedResponse.content }];
-    }
-
-    if (parsedResponse.type === 'table') {
+    if (parsed.type === 'table') {
       return [
-        { type: 'text', text: parsedResponse.title || 'Here’s what I found:' },
-        { type: 'table', rows: parsedResponse.content }
+        { type: 'text', text: parsed.title || 'Here’s what I found:' },
+        { type: 'table', rows: parsed.content }
       ];
     }
 
-    if (parsedResponse.type === 'product-cards') {
+    if (parsed.type === 'product-cards') {
       return [
-        { type: 'text', text: parsedResponse.title || 'Here are some options:' },
-        ...parsedResponse.content.map(product => ({
+        { type: 'text', text: parsed.title || 'Here are some options:' },
+        ...parsed.content.map(product => ({
           type: 'product',
           title: product.name,
           price: product.price,
@@ -81,7 +60,6 @@ async function enhanceResponse(text) {
       ];
     }
 
-    // Fallback
     return [{ type: 'text', text }];
   } catch (error) {
     console.error('Error enhancing response:', error);
@@ -89,26 +67,21 @@ async function enhanceResponse(text) {
   }
 }
 
-// --- Parse GPT response for structure ---
+// --- Try to detect tables or product card structure from ChatGPT ---
 function parseResponse(text) {
-  // Try to parse a markdown-style table
   if (text.includes('|') && text.includes('---')) {
     try {
-      const lines = text.split('\n').filter(line => line.trim());
+      const lines = text.split('\n').filter(Boolean);
       const start = lines.findIndex(line => line.includes('|'));
       const title = lines.slice(0, start).join(' ').replace(/[#*]/g, '').trim();
-
       const headers = lines[start].split('|').map(h => h.trim()).filter(Boolean);
       const bodyStart = lines[start + 1].includes('---') ? start + 2 : start + 1;
 
       const rows = lines.slice(bodyStart).map(line => {
         const values = line.split('|').map(cell => cell.trim()).filter(Boolean);
         if (values.length !== headers.length) return null;
-
         const row = {};
-        headers.forEach((header, i) => {
-          row[header.toLowerCase()] = values[i];
-        });
+        headers.forEach((h, i) => { row[h.toLowerCase()] = values[i]; });
         return row;
       }).filter(Boolean);
 
@@ -120,11 +93,11 @@ function parseResponse(text) {
         };
       }
     } catch (err) {
-      console.error('Table parsing error:', err);
+      console.error('Table parsing failed:', err);
     }
   }
 
-  // Try to detect and extract product card-like content
+  // Simple product card-style detection
   const sections = text.split('\n\n').filter(Boolean);
   if (sections.length >= 2) {
     const cards = sections.map(section => {
@@ -138,7 +111,8 @@ function parseResponse(text) {
         name,
         price: price || '£TBC',
         description: description || 'A well nice item',
-        image: '/assets/images/product-placeholder.jpg'
+        image: '/assets/images/product-placeholder.jpg',
+        url: '#'
       };
     });
 
@@ -160,6 +134,5 @@ function parseResponse(text) {
 
 module.exports = {
   callOpenAI,
-  enhanceResponse,
-  parseResponse
+  enhanceResponse
 };
