@@ -1,6 +1,7 @@
 {
   "name": "well-nice-concierge",
   "version": "1.0.0",
+  "description": "A GPT-powered lifestyle product concierge for Well Nice.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
