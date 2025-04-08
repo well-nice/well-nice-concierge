@@ -142,9 +142,11 @@ app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => 
     conversations.set(conversationId, conversation);
     
     res.json({
-      conversationId,
-      response: enhancedResponse
-    });
+  conversationId,
+  messages: Array.isArray(enhancedResponse)
+    ? enhancedResponse
+    : [{ type: "text", text: enhancedResponse }]
+});
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({
