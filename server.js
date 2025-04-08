@@ -1,90 +1,195 @@
+// server.js - Main server file
 const express = require('express');
 const cors = require('cors');
-const { OpenAI } = require('openai');
-require('dotenv').config();
+const rateLimit = require('express-rate-limit');
+const { v4: uuidv4 } = require('uuid');
+const dotenv = require('dotenv');
+const { callOpenAI, enhanceResponse } = require('./services/openai');
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
-
-// Configure OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
 
 // Middleware
-app.use(cors({
-  origin: ['https://www.wellnice.com', 'http://localhost:3000'] // Add your domains
-}));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// CORS configuration
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'https://www.wellnice.com',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Rate limiting to prevent abuse
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later'
+});
+app.use('/api/concierge', apiLimiter);
+
+// In-memory storage for conversations (use a database in production)
+const conversations = new Map();
+
+// Request validation middleware
+const validateRequest = (req, res, next) => {
+  const { message } = req.body;
+  
+  if (!message || typeof message !== 'string' || message.trim() === '') {
+    return res.status(400).json({ 
+      error: 'Invalid request: message is required and must be a non-empty string' 
+    });
+  }
+  
+  next();
+};
 
 // Health check endpoint
-app.get('/', (req, res) => {
-  res.status(200).send('Well Nice Concierge API is running');
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
 
-// Concierge API endpoint
-app.post('/api/concierge', async (req, res) => {
+// Start a new conversation
+app.post('/api/concierge', validateRequest, async (req, res) => {
   try {
-    const { message, conversationHistory } = req.body;
+    const { message } = req.body;
+    const conversationId = uuidv4();
     
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
+    // System message that defines the concierge personality
+    const systemMessage = {
+      role: 'system',
+      content: `You are the Well Nice concierge, a taste maker and knower of beautifully designed products and lifestyle choices.
+      
+      You help users discover products, places to visit, music to listen to, films to watch, TV shows, clothes to buy, 
+      cars to purchase, podcasts, fragrances, posters, interior design ideas, garden designs, restaurants, and more.
+      
+      Your responses should be elegant, thoughtful, and precise. You represent the Well Nice brand which values 
+      minimalist aesthetics, quality, and timeless design.
+      
+      When recommending products or experiences, present them in a beautiful, organized format.
+      If appropriate, structure your response as a table with relevant categories.
+      For visual items, format your response to enable a card-based display.`
+    };
     
-    // Format messages for OpenAI
-    const messages = [
-      { 
-        role: 'system', 
-        content: `You are the Well Nice Concierge, a sophisticated and knowledgeable assistant for wellnice.com. You provide curated recommendations for beautifully designed products and lifestyle choices. 
-
-Your expertise includes:
-- Interior design and home decor
-- Fashion and style
-- Travel destinations
-- Film, TV, and music recommendations
-- Food and restaurants
-- Fragrances and personal care
-- Art and design
-
-Be concise but thorough. Format product recommendations in numbered lists with product names, prices (when possible), and brief descriptions. Highlight what makes each recommendation special.
-
-When asked about products, include a brief reason why each recommendation is well-designed or exceptional.
-        `
-      }
+    // Initialize conversation history
+    const history = [
+      systemMessage,
+      { role: 'user', content: message }
     ];
     
-    // Add conversation history
-    if (conversationHistory && Array.isArray(conversationHistory)) {
-      messages.push(...conversationHistory);
+    // Call OpenAI API
+    const response = await callOpenAI(history);
+    
+    // Enhance response with product data if applicable
+    const enhancedResponse = await enhanceResponse(response);
+    
+    // Store conversation history
+    conversations.set(conversationId, {
+      history: [
+        systemMessage,
+        { role: 'user', content: message },
+        { role: 'assistant', content: response }
+      ],
+      created: new Date()
+    });
+    
+    // Clean up old conversations (once per 100 requests on average)
+    if (Math.random() < 0.01) {
+      cleanupOldConversations();
     }
     
-    // Add user's current message
-    messages.push({ role: 'user', content: message });
-    
-    // Call OpenAI API
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4",  // Use the appropriate model
-      messages: messages,
-      max_tokens: 1000,
-      temperature: 0.7,
+    res.json({
+      conversationId,
+      response: enhancedResponse
     });
-    
-    // Send response
-    res.json({ 
-      reply: completion.choices[0].message.content,
-      usage: completion.usage
-    });
-    
   } catch (error) {
-    console.error('Error processing request:', error);
-    res.status(500).json({ 
-      error: 'Failed to process request',
+    console.error('Error:', error);
+    res.status(500).json({
+      error: 'Error processing your request',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
+// Continue an existing conversation
+app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { message } = req.body;
+    
+    // Check if conversation exists
+    if (!conversations.has(conversationId)) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    
+    const conversation = conversations.get(conversationId);
+    
+    // Add user message to history
+    conversation.history.push({ role: 'user', content: message });
+    
+    // Call OpenAI API with conversation history
+    const response = await callOpenAI(conversation.history);
+    
+    // Enhance response with product data if applicable
+    const enhancedResponse = await enhanceResponse(response);
+    
+    // Add assistant response to history
+    conversation.history.push({ role: 'assistant', content: response });
+    
+    // Update conversation in storage
+    conversations.set(conversationId, conversation);
+    
+    res.json({
+      conversationId,
+      response: enhancedResponse
+    });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      error: 'Error processing your request',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Clean up conversations older than 24 hours
+function cleanupOldConversations() {
+  const now = new Date();
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  
+  for (const [id, conversation] of conversations.entries()) {
+    if (conversation.created < oneDayAgo) {
+      conversations.delete(id);
+    }
+  }
+}
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error',
+    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
 // Start server
-app.listen(port, () => {
-  console.log(`Well Nice Concierge API listening on port ${port}`);
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+}).on('error', (error) => {
+  console.error('Error starting server:', error);
+  process.exit(1);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
