@@ -15,7 +15,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS for Squarespace + Subdomain if needed
+// CORS for Squarespace or subdomain
 app.use(cors({
   origin: [
     'https://www.wellnice.com',
@@ -25,32 +25,32 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Rate limit to prevent abuse
+// Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
-  message: 'Too many requests, please try again later.'
+  message: 'Too many requests from this IP, please try again later.'
 });
 app.use('/api/concierge', apiLimiter);
 
-// In-memory session store (simple for now)
+// In-memory conversation store
 const conversations = new Map();
 
 // Request validation
 const validateRequest = (req, res, next) => {
   const { message } = req.body;
   if (!message || typeof message !== 'string' || message.trim() === '') {
-    return res.status(400).json({
-      error: 'Invalid request: "message" must be a non-empty string'
-    });
+    return res.status(400).json({ error: 'Message must be a non-empty string' });
   }
   next();
 };
 
-// Health check
-app.get('/health', (req, res) => res.status(200).send('OK'));
+// Health check route
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
-// Start new conversation
+// Start a new conversation
 app.post('/api/concierge', validateRequest, async (req, res) => {
   try {
     const { message } = req.body;
@@ -58,25 +58,7 @@ app.post('/api/concierge', validateRequest, async (req, res) => {
 
     const systemMessage = {
       role: 'system',
-      content: `You are the Well Nice concierge — a stylist, personal shopper, and design-led taste maker.
-
-You recommend timeless products, places to visit, playlists, interiors, clothes, prints, and lifestyle pieces with charm and taste.
-
-Use elegant, editorial language. When you recommend something visual (like a product), return it in the following structured JSON format:
-
-{
-  "type": "product",
-  "title": "Object Name",
-  "price": "£Price",
-  "description": "Brief but stylish description.",
-  "image": "https://example.com/image.jpg",
-  "url": "https://example.com/product-page"
-}
-
-All non-product replies should use:
-{ "type": "text", "text": "Reply here." }
-
-You represent a clean, premium, well-curated brand and respond with grace, clarity, and good design.`
+      content: `You are the Well Nice concierge — a tastemaker who recommends stylish, thoughtfully curated products, places, and lifestyle inspiration. Use a calm and confident tone. Format your replies using structured JSON when appropriate.`
     };
 
     const history = [
@@ -84,11 +66,11 @@ You represent a clean, premium, well-curated brand and respond with grace, clari
       { role: 'user', content: message }
     ];
 
-    const rawResponse = await callOpenAI(history);
-    const enhancedResponse = await enhanceResponse(rawResponse);
+    const responseText = await callOpenAI(history);
+    const enhanced = await enhanceResponse(responseText);
 
     conversations.set(conversationId, {
-      history: [...history, { role: 'assistant', content: rawResponse }],
+      history: [...history, { role: 'assistant', content: responseText }],
       created: new Date()
     });
 
@@ -96,21 +78,17 @@ You represent a clean, premium, well-curated brand and respond with grace, clari
 
     res.json({
       conversationId,
-      messages: Array.isArray(enhancedResponse)
-        ? enhancedResponse
-        : [{ type: 'text', text: enhancedResponse }]
+      messages: Array.isArray(enhanced)
+        ? enhanced
+        : [{ type: 'text', text: enhanced }]
     });
-
   } catch (error) {
-    console.error('Error in /api/concierge:', error);
-    res.status(500).json({
-      error: 'Something went wrong. Please try again.',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    console.error('Error in POST /api/concierge:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Continue existing conversation
+// Continue a conversation
 app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => {
   try {
     const { conversationId } = req.params;
@@ -123,34 +101,32 @@ app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => 
     const conversation = conversations.get(conversationId);
     conversation.history.push({ role: 'user', content: message });
 
-    const rawResponse = await callOpenAI(conversation.history);
-    const enhancedResponse = await enhanceResponse(rawResponse);
+    const responseText = await callOpenAI(conversation.history);
+    const enhanced = await enhanceResponse(responseText);
 
-    conversation.history.push({ role: 'assistant', content: rawResponse });
+    conversation.history.push({ role: 'assistant', content: responseText });
     conversations.set(conversationId, conversation);
 
     res.json({
       conversationId,
-      messages: Array.isArray(enhancedResponse)
-        ? enhancedResponse
-        : [{ type: 'text', text: enhancedResponse }]
+      messages: Array.isArray(enhanced)
+        ? enhanced
+        : [{ type: 'text', text: enhanced }]
     });
-
   } catch (error) {
     console.error('Error continuing conversation:', error);
-    res.status(500).json({
-      error: 'Something went wrong. Please try again.',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Clean up old conversations
+// Cleanup expired conversations
 function cleanupOldConversations() {
   const now = Date.now();
   const cutoff = now - 24 * 60 * 60 * 1000;
   for (const [id, convo] of conversations.entries()) {
-    if (convo.created < cutoff) conversations.delete(id);
+    if (convo.created < cutoff) {
+      conversations.delete(id);
+    }
   }
 }
 
@@ -158,12 +134,11 @@ function cleanupOldConversations() {
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
-    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    error: err.message || 'Internal server error'
   });
 });
 
-// Boot server
+// 🚀 Start server with dynamic port
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Well Nice Concierge running on port ${PORT}`);
@@ -172,12 +147,11 @@ app.listen(PORT, () => {
   process.exit(1);
 });
 
-// Exit safety
+// Fail-safe crash catchers
 process.on('uncaughtException', err => {
-  console.error('Uncaught exception:', err);
+  console.error('Uncaught Exception:', err);
   process.exit(1);
 });
-
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled rejection:', promise, 'Reason:', reason);
+  console.error('Unhandled Rejection at:', promise, 'Reason:', reason);
 });
