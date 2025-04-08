@@ -75,7 +75,9 @@ class ConversationManager {
       }
     }
     
-    console.log(`Pruned ${expired} expired conversations`);
+    if (expired > 0) {
+      console.log(`Pruned ${expired} expired conversations`);
+    }
   }
   
   pruneIfNeeded() {
