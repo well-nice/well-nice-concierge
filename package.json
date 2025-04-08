@@ -4,8 +4,9 @@
   "description": "A GPT-powered lifestyle product concierge for Well Nice.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
-  },
+  "start": "PORT=$PORT node server.js"
+}
+,
   "dependencies": {
     "axios": "^1.6.0",
     "cors": "^2.8.5",
