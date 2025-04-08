@@ -6,7 +6,6 @@ const { v4: uuidv4 } = require('uuid');
 const dotenv = require('dotenv');
 const { callOpenAI, enhanceResponse } = require('./services/openai');
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
@@ -15,7 +14,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS for Squarespace or subdomain
+// CORS for Squarespace and subdomain
 app.use(cors({
   origin: [
     'https://www.wellnice.com',
@@ -33,7 +32,7 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/concierge', apiLimiter);
 
-// In-memory conversation store
+// In-memory conversation store (consider Redis or DB for production)
 const conversations = new Map();
 
 // Request validation
@@ -58,7 +57,15 @@ app.post('/api/concierge', validateRequest, async (req, res) => {
 
     const systemMessage = {
       role: 'system',
-      content: `You are the Well Nice concierge — a tastemaker who recommends stylish, thoughtfully curated products, places, and lifestyle inspiration. Use a calm and confident tone. Format your replies using structured JSON when appropriate.`
+      content: `You are the Well Nice concierge — a taste maker with a calm, confident tone and an eye for timeless style.
+
+You help users discover products, brands, places, and lifestyle ideas. Curate results beautifully.
+
+If the output includes multiple products, format it as either:
+- A table (with headers like Title, Brand, Price, Link)
+- Or a card for each item (with title, description, price, image, and URL)
+
+Return JSON-structured results in your reply when appropriate.`
     };
 
     const history = [
@@ -88,7 +95,7 @@ app.post('/api/concierge', validateRequest, async (req, res) => {
   }
 });
 
-// Continue a conversation
+// Continue an existing conversation
 app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => {
   try {
     const { conversationId } = req.params;
@@ -114,12 +121,12 @@ app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => 
         : [{ type: 'text', text: enhanced }]
     });
   } catch (error) {
-    console.error('Error continuing conversation:', error);
+    console.error('Error in POST /api/concierge/:conversationId:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Cleanup expired conversations
+// Cleanup expired conversations after 24 hours
 function cleanupOldConversations() {
   const now = Date.now();
   const cutoff = now - 24 * 60 * 60 * 1000;
@@ -138,7 +145,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 🚀 Start server with dynamic port
+// 🚀 Start server on Render-assigned port
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Well Nice Concierge running on port ${PORT}`);
@@ -147,7 +154,7 @@ app.listen(PORT, () => {
   process.exit(1);
 });
 
-// Fail-safe crash catchers
+// Crash guards
 process.on('uncaughtException', err => {
   console.error('Uncaught Exception:', err);
   process.exit(1);
