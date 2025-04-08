@@ -2,9 +2,9 @@
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const { v4: uuidv4 } = require('uuid');
 const dotenv = require('dotenv');
 const { callOpenAI, enhanceResponse } = require('./services/openai');
+const ConversationManager = require('./services/conversation-manager');
 
 dotenv.config();
 const app = express();
@@ -16,7 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 // Customize CORS for production
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://www.wellnice.com', 'https://concierge.wellnice.com'] 
+    ? ['https://www.wellnice.com', 'https://concierge.wellnice.com', '*'] // Added wildcard for testing
     : '*',
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -32,29 +32,12 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/concierge', apiLimiter);
 
-// Simple in-memory conversation storage with expiration
-const conversations = new Map();
-
-// Conversation cleanup function - runs periodically
-const cleanupConversations = () => {
-  const now = Date.now();
-  const expirationMs = 24 * 60 * 60 * 1000; // 24 hours
-  let expired = 0;
-  
-  conversations.forEach((conversation, id) => {
-    if (now - conversation.lastUpdated > expirationMs) {
-      conversations.delete(id);
-      expired++;
-    }
-  });
-  
-  if (expired > 0) {
-    console.log(`Cleaned up ${expired} expired conversations`);
-  }
-};
-
-// Run cleanup every hour
-setInterval(cleanupConversations, 60 * 60 * 1000);
+// Initialize conversation manager
+const conversationManager = new ConversationManager({
+  expirationMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+  maxConversations: 20000,
+  pruneInterval: 2 * 60 * 60 * 1000 // Every 2 hours
+});
 
 // System message - core concierge persona
 const systemMessage = {
@@ -79,47 +62,6 @@ KNOWLEDGE DOMAINS:
 - Architecture & interior design
 - Collectibles & investment pieces
 
-RESPONSE FORMAT:
-When recommending products or places, ALWAYS structure your response as a JSON object using one of these formats:
-
-For a single recommendation:
-{
-  "type": "product",
-  "title": "Product Name",
-  "price": "£199",
-  "description": "A description that captures the essence, materials, and why it's worthy of recommendation.",
-  "image": "https://example.com/image.jpg",
-  "url": "https://retailer.com/product-page"
-}
-
-For multiple recommendations:
-[
-  {
-    "type": "product",
-    "title": "First Product",
-    "price": "£199",
-    "description": "Description of why this is exceptional.",
-    "image": "https://example.com/image1.jpg",
-    "url": "https://retailer.com/product1"
-  },
-  {
-    "type": "product",
-    "title": "Second Product",
-    "price": "£299",
-    "description": "Description of why this is exceptional.",
-    "image": "https://example.com/image2.jpg",
-    "url": "https://retailer.com/product2"
-  }
-]
-
-For concept explanations or non-product recommendations:
-{
-  "type": "text",
-  "title": "A Concise Heading",
-  "content": "Your thoughtful explanation, advice or commentary."
-}
-
-RETAILERS & SOURCES:
 When recommending products, only reference legitimate, high-quality retailers, such as:
 - Fashion: Liberty London, Selfridges, Mr Porter, Matches Fashion, END.
 - Home & Design: Heal's, The Conran Shop, Vitra, SCP, OPUMO, Made.com
@@ -147,7 +89,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    conversations: conversations.size
+    conversations: conversationManager.conversations.size
   });
 });
 
@@ -155,23 +97,36 @@ app.get('/health', (req, res) => {
 app.post('/api/concierge', validateRequest, async (req, res) => {
   try {
     const { message } = req.body;
-    const conversationId = uuidv4();
     
-    // Set up conversation history with system message
-    const history = [systemMessage, { role: 'user', content: message }];
+    // Create a new conversation with system message
+    const conversationId = conversationManager.create(systemMessage);
+    
+    // Add the user message
+    conversationManager.addMessage(conversationId, { 
+      role: 'user', 
+      content: message 
+    });
+    
+    // Get the current conversation history
+    const history = conversationManager.getHistory(conversationId);
     
     // Call OpenAI with the conversation history
     const responseText = await callOpenAI(history);
     
-    // Store conversation with timestamp
-    conversations.set(conversationId, {
-      history: [...history, { role: 'assistant', content: responseText }],
-      created: Date.now(),
-      lastUpdated: Date.now()
+    // Add the assistant response to history
+    conversationManager.addMessage(conversationId, { 
+      role: 'assistant', 
+      content: responseText 
     });
     
     // Process and enhance the response
     const enhanced = await enhanceResponse(responseText);
+    
+    // Log what we're about to send
+    console.log(`Response for ${conversationId}:`, {
+      messageCount: enhanced.length,
+      types: enhanced.map(m => m.type)
+    });
     
     // Return the enhanced response
     res.json({
@@ -194,33 +149,39 @@ app.post('/api/concierge/:conversationId', validateRequest, async (req, res) => 
     const { message } = req.body;
     
     // Check if the conversation exists
-    if (!conversations.has(conversationId)) {
+    if (!conversationManager.exists(conversationId)) {
       return res.status(404).json({ 
         error: 'Conversation not found',
         suggestion: 'Start a new conversation instead' 
       });
     }
     
-    // Get the conversation
-    const conversation = conversations.get(conversationId);
-    
     // Add the user message
-    conversation.history.push({ role: 'user', content: message });
+    conversationManager.addMessage(conversationId, { 
+      role: 'user', 
+      content: message 
+    });
+    
+    // Get the updated conversation history
+    const history = conversationManager.getHistory(conversationId);
     
     // Call OpenAI with the conversation history
-    const responseText = await callOpenAI(conversation.history);
+    const responseText = await callOpenAI(history);
     
     // Add the assistant response to history
-    conversation.history.push({ role: 'assistant', content: responseText });
-    
-    // Update timestamp
-    conversation.lastUpdated = Date.now();
-    
-    // Store updated conversation
-    conversations.set(conversationId, conversation);
+    conversationManager.addMessage(conversationId, { 
+      role: 'assistant', 
+      content: responseText 
+    });
     
     // Process and enhance the response
     const enhanced = await enhanceResponse(responseText);
+    
+    // Log what we're about to send
+    console.log(`Response for existing ${conversationId}:`, {
+      messageCount: enhanced.length,
+      types: enhanced.map(m => m.type)
+    });
     
     // Return the enhanced response
     res.json({
@@ -257,5 +218,4 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Well Nice Concierge running on port ${PORT}`));
 
-// Export for testing
-module.exports = app;
+module.exports = app; // Export for testing
